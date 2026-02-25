@@ -1,0 +1,12 @@
+praw
+gtts
+moviepy>=2.2.1
+imageio>=2.37.2
+imageio-ffmpeg>=0.6.0
+setuptools
+Flask
+flask-cors
+gunicorn
+pyyaml
+python-dotenv
+openai-whisper

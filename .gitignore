@@ -1,0 +1,45 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.pyc
+
+# Virtual environment
+thread-2-tok/backend/venv/
+venv/
+env/
+
+# Environment / secrets
+thread-2-tok/backend/.env
+.env
+
+# Output videos (large binary files)
+thread-2-tok/output_videos/
+output_videos/
+
+# Background videos (large binary files - user supplies their own)
+thread-2-tok/backend/background_videos/
+backend/background_videos/
+
+# Temp files created during render
+thread-2-tok/backend/_temp_narration.mp3
+thread-2-tok/backend/_temp_narration.mp3.raw.mp3
+
+# Whisper model cache
+~/.cache/whisper/
+
+# Large archives
+*.rar
+*.zip
+*.tar.gz
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.suo
+*.user

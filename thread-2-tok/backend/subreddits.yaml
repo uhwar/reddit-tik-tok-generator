@@ -1,0 +1,46 @@
+# Subreddit Configuration with Tags
+# Format: subreddit_name: [tag1, tag2, ...]
+
+# Story-focused subreddits
+AmITheAsshole: [relationship, drama, conflict]
+relationship_advice: [relationship, advice, drama]
+tifu: [funny, embarrassing, story]
+
+# Horror/Scary subreddits
+nosleep: [horror, scary, fiction]
+LetsNotMeet: [horror, scary, 'true', stalker]
+TrueScaryStories: [horror, scary, 'true']
+Paranormal: [horror, paranormal, scary]
+creepyencounters: [horror, scary, 'true']
+
+# Funny/Lighthearted subreddits
+AskReddit: [funny, discussion, story]
+funny: [funny, humor]
+Jokes: [funny, humor, short]
+
+# Knowledge/Interesting subreddits
+todayilearned: [interesting, facts, educational]
+LifeProTips: [advice, tips, useful]
+ExplainLikeImFive: [educational, explanation, interesting]
+
+# Work/Career related
+antiwork: [work, career, rant]
+MaliciousCompliance: [work, funny, revenge]
+pettyrevenge: [revenge, satisfying, story]
+prorevenge: [revenge, satisfying, story]
+
+# Emotional/Wholesome
+toastme: [wholesome, positive, support]
+MadeMeSmile: [wholesome, positive, feelgood]
+HumansBeingBros: [wholesome, kind, positive]
+offmychest: [emotional, vent, support, confession]
+trueoffmychest: [emotional, vent, confession, true]
+confession: [emotional, confession, story]
+confessions: [emotional, confession, story]
+tifu: [funny, embarrassing, story, confession]
+AmITheAsshole: [relationship, drama, conflict, confession]
+
+# Tech/Programming
+programming: [tech, coding, educational]
+talesfromtechsupport: [tech, funny, work]
+webdev: [tech, coding, educational]
