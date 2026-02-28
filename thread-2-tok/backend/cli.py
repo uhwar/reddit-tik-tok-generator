@@ -265,31 +265,75 @@ def display_stories(stories, max_seconds=120, duration_label="Under 2 minutes", 
     return page
 
 
-def select_story_interactive(stories, has_more=False):
+def select_story_interactive(stories, has_more=False, multi=False):
     """Let user select a story from the displayed page.
     Returns (story, 'more') where story is the selected story or None,
     and 'more' is True if the user wants the next page.
+    If multi=True, returns (selected_stories, 'more') where selected_stories is a list.
     """
     if not stories:
-        return None, False
+        return [] if multi else (None, False), False
 
     more_hint = ", (m)ore" if has_more else ""
-    prompt = f"\nSelect story number (1-{len(stories)}){more_hint} or 'q' to quit: "
+    batch_hint = " or (b)atch select" if multi else ""
+    prompt = f"\nSelect story number (1-{len(stories)}){more_hint}{batch_hint} or 'q' to quit: "
 
     while True:
         try:
             choice = input(prompt).strip().lower()
             if choice == 'q':
-                return None, False
+                return [] if multi else (None, False), False
             if choice == 'm' and has_more:
-                return None, True
+                return [] if multi else (None, True), True
+            if choice == 'b' and multi:
+                return select_multiple_stories(stories), False
             idx = int(choice) - 1
             if 0 <= idx < len(stories):
-                return stories[idx], False
+                return [stories[idx]] if multi else (stories[idx], False), False
             else:
                 print(f"Invalid selection. Please choose 1-{len(stories)}.")
         except ValueError:
             print("Invalid input. Please enter a number or 'q'.")
+
+
+def select_multiple_stories(stories):
+    """Allow user to select multiple stories by entering numbers separated by commas or ranges."""
+    print("\nBatch selection mode:")
+    print("  - Enter numbers separated by commas: 1,3,5")
+    print("  - Enter ranges: 1-3")
+    print("  - Mix: 1,3-5,7")
+    print("  - 'all' to select all stories on this page")
+    print("  - 'back' to return to single selection")
+    
+    while True:
+        choice = input("\nEnter selections: ").strip().lower()
+        if choice == 'back':
+            return []
+        if choice == 'all':
+            return stories
+        
+        try:
+            selected = []
+            parts = choice.split(',')
+            for part in parts:
+                part = part.strip()
+                if '-' in part:
+                    start, end = map(int, part.split('-'))
+                    for i in range(start, end + 1):
+                        if 1 <= i <= len(stories):
+                            selected.append(stories[i-1])
+                else:
+                    i = int(part)
+                    if 1 <= i <= len(stories):
+                        selected.append(stories[i-1])
+            
+            if selected:
+                print(f"Selected {len(selected)} stories.")
+                return selected
+            else:
+                print("No valid selections. Try again.")
+        except ValueError:
+            print("Invalid format. Use numbers like 1,3,5 or ranges like 1-3.")
 
 
 def view_full_story(story):
@@ -372,32 +416,20 @@ def browse_by_tag():
     tag_input = input("\nEnter tag name (or number): ").strip().lower()
     
     # Check if user entered a number
-    selected_tag = None
-    if tag_input.isdigit():
-        idx = int(tag_input) - 1
-        if 0 <= idx < len(tags):
-            selected_tag = tags[idx]
-    else:
-        # Find tag case-insensitively
-        for tag in tags:
-            if tag.lower() == tag_input:
-                selected_tag = tag
-                break
-    
-    if not selected_tag:
-        print(f"Tag '{tag_input}' not found.")
-        return
-    
-    # Get virality threshold
     try:
-        min_virality = input("Minimum virality score (0-9, default 0): ").strip()
-        min_virality = int(min_virality) if min_virality else 0
-        min_virality = max(0, min(9, min_virality))
+        choice = int(input("\nSelect tag number: ")) - 1
+        if 0 <= choice < len(tags):
+            selected_tag = tags[choice]
+        else:
+            print("Invalid selection.")
+            return
     except ValueError:
-        min_virality = 0
-    
-    # Fetch and display stories
-    print(f"\nFetching stories from '{selected_tag}' subreddits (min virality: {min_virality})...")
+        print("Invalid input.")
+        return
+
+    # Step 3: Fetch and display stories
+    min_virality = int(input("Minimum virality score (1-9, default 4): ") or "4")
+    print(f"\nFetching stories for tag '{selected_tag}'...")
     stories = fetch_stories_by_tag(selected_tag, min_virality=min_virality)
 
     if not stories:
@@ -413,32 +445,42 @@ def browse_by_tag():
             break
 
         has_more = (offset + 10) < len(stories)
-        story, want_more = select_story_interactive(page, has_more=has_more)
+        # Enable multi=True for batch selection
+        selected_stories, want_more = select_story_interactive(page, has_more=has_more, multi=True)
 
         if want_more:
             offset += 10
             continue
 
-        if not story:
+        if not selected_stories:
             break
 
-        view_full_story(story)
-
-        # Post-view options
-        while True:
-            action = input("\n[Options] (s)ave to file, (g)enerate video, (b)ack to list, (q)uit: ").strip().lower()
-            if action == 's':
-                save_story_to_file(story)
-            elif action == 'g':
-                generate_video_interactive(story, duration_key=duration_key, allow_split=allow_split)
-            elif action == 'b':
-                break
-            elif action == 'q':
-                sys.exit(0)
-            else:
-                print("Invalid option.")
-        # After returning from post-view, go back to same page
-        continue
+        # If single story selected, show full story first
+        if len(selected_stories) == 1:
+            view_full_story(selected_stories[0])
+            # Post-view options
+            while True:
+                action = input("\n[Options] (s)ave to file, (g)enerate video, (b)ack to list, (q)uit: ").strip().lower()
+                if action == 's':
+                    save_story_to_file(selected_stories[0])
+                elif action == 'g':
+                    generate_video_interactive(story=selected_stories[0], duration_key=duration_key, allow_split=allow_split)
+                elif action == 'b':
+                    break
+                elif action == 'q':
+                    sys.exit(0)
+                else:
+                    print("Invalid option.")
+            # After returning from post-view, go back to same page
+            continue
+        else:
+            # Multiple stories selected - go straight to batch generation
+            print(f"\nBatch selection: {len(selected_stories)} stories")
+            for i, s in enumerate(selected_stories, 1):
+                print(f"  {i}. {s['title'][:50]}...")
+            generate_video_interactive(stories=selected_stories, duration_key=duration_key, allow_split=allow_split)
+            # After batch render, return to list
+            continue
 
 
 def list_all_subreddits():
@@ -499,22 +541,30 @@ def search_subreddit():
         print(f"Error accessing r/{subreddit_name}: {e}")
 
 
-def generate_video_interactive(story, duration_key=None, allow_split=False):
+def generate_video_interactive(story=None, stories=None, duration_key=None, allow_split=False):
     """Interactive video generation flow: pick voice, background, render.
     If duration_key is provided (pre-selected at browse time), skip asking again.
+    If stories is provided (list), render batch; otherwise render single story.
     """
     print("\n" + "="*60)
     print("VIDEO GENERATOR")
     print("="*60)
 
-    # Estimate story length upfront
-    import re as _re
-    raw_text = f"{story['title']}. {story['full_body']}"
-    raw_text = _re.sub(r'\*+|#+\s*|\[.*?\]\(.*?\)', '', raw_text)
-    raw_text = _re.sub(r'\n+', ' ', raw_text).strip()
-    estimated_secs = estimate_duration_seconds(raw_text)
-    estimated_mins = estimated_secs / 60
-    print(f"\nEstimated story length: ~{estimated_mins:.1f} minutes ({int(estimated_secs)}s)")
+    # Determine if batch or single
+    is_batch = stories is not None
+    if is_batch:
+        stories_to_render = stories
+        print(f"\nBatch mode: {len(stories_to_render)} stories selected")
+    else:
+        stories_to_render = [story]
+        # Estimate story length upfront
+        import re as _re
+        raw_text = f"{story['title']}. {story['full_body']}"
+        raw_text = _re.sub(r'\*+|#+\s*|\[.*?\]\(.*?\)', '', raw_text)
+        raw_text = _re.sub(r'\n+', ' ', raw_text).strip()
+        estimated_secs = estimate_duration_seconds(raw_text)
+        estimated_mins = estimated_secs / 60
+        print(f"\nEstimated story length: ~{estimated_mins:.1f} minutes ({int(estimated_secs)}s)")
 
     # Duration mode — use pre-selected if available, otherwise ask
     if duration_key and duration_key in DURATION_MODES:
@@ -537,7 +587,7 @@ def generate_video_interactive(story, duration_key=None, allow_split=False):
     print("\nAvailable Voices:")
     for key, v in VOICE_OPTIONS.items():
         print(f"  {key}. {v['name']}")
-    voice_key = input("\nSelect voice (1-5, default 1): ").strip() or "1"
+    voice_key = input("\nSelect voice (1-14, default 1): ").strip() or "1"
     if voice_key not in VOICE_OPTIONS:
         print("Invalid choice, defaulting to voice 1.")
         voice_key = "1"
@@ -570,29 +620,59 @@ def generate_video_interactive(story, duration_key=None, allow_split=False):
     print(f"Selected: {bg_filename}")
 
     # Step 4: Confirm and render
-    will_split = estimated_secs > max_seconds
-    parts_count = int(estimated_secs // max_seconds) + 1 if will_split else 1
-    print(f"\nReady to generate:")
-    print(f"  Story:    {story['title'][:60]}")
-    print(f"  Voice:    {VOICE_OPTIONS[voice_key]['name']}")
-    print(f"  Duration: {DURATION_MODES[duration_key]['label']}")
-    print(f"  Parts:    {parts_count} video{'s' if parts_count > 1 else ''}")
-    print(f"  BG:       {bg_filename}")
-    print(f"  Output:   output_videos/")
-    confirm = input("\nStart rendering? (y/n): ").strip().lower()
-    if confirm != 'y':
-        print("Cancelled.")
-        return
+    if is_batch:
+        print(f"\nReady to generate batch:")
+        print(f"  Stories:  {len(stories_to_render)} selected")
+        print(f"  Voice:    {VOICE_OPTIONS[voice_key]['name']}")
+        print(f"  Duration: {DURATION_MODES[duration_key]['label']}")
+        print(f"  BG:       {bg_filename}")
+        print(f"  Output:   output_videos/")
+        confirm = input("\nStart batch rendering? (y/n): ").strip().lower()
+        if confirm != 'y':
+            print("Cancelled.")
+            return
 
-    print("\nGenerating video... (this may take a few minutes)")
-    output_paths = generate_video(story, voice_key, bg_filename, max_seconds=max_seconds, allow_split=allow_split)
-
-    if output_paths:
-        print(f"\nDone! {len(output_paths)} video(s) saved:")
-        for p in output_paths:
-            print(f"  {p}")
+        print("\nStarting batch render...")
+        all_outputs = []
+        for i, s in enumerate(stories_to_render, 1):
+            print(f"\n[{i}/{len(stories_to_render)}] Rendering: {s['title'][:50]}...")
+            outputs = generate_video(s, voice_key, bg_filename, max_seconds=max_seconds, allow_split=allow_split)
+            if outputs:
+                all_outputs.extend(outputs)
+                print(f"  -> {len(outputs)} video(s) saved")
+            else:
+                print(f"  -> FAILED")
+        
+        if all_outputs:
+            print(f"\nBatch complete! {len(all_outputs)} total video(s) saved:")
+            for p in all_outputs:
+                print(f"  {p}")
+        else:
+            print("\nBatch failed. Check errors above.")
     else:
-        print("\nVideo generation failed. Check errors above.")
+        will_split = estimated_secs > max_seconds
+        parts_count = int(estimated_secs // max_seconds) + 1 if will_split else 1
+        print(f"\nReady to generate:")
+        print(f"  Story:    {story['title'][:60]}")
+        print(f"  Voice:    {VOICE_OPTIONS[voice_key]['name']}")
+        print(f"  Duration: {DURATION_MODES[duration_key]['label']}")
+        print(f"  Parts:    {parts_count} video{'s' if parts_count > 1 else ''}")
+        print(f"  BG:       {bg_filename}")
+        print(f"  Output:   output_videos/")
+        confirm = input("\nStart rendering? (y/n): ").strip().lower()
+        if confirm != 'y':
+            print("Cancelled.")
+            return
+
+        print("\nGenerating video... (this may take a few minutes)")
+        output_paths = generate_video(story, voice_key, bg_filename, max_seconds=max_seconds, allow_split=allow_split)
+
+        if output_paths:
+            print(f"\nDone! {len(output_paths)} video(s) saved:")
+            for p in output_paths:
+                print(f"  {p}")
+        else:
+            print("\nVideo generation failed. Check errors above.")
 
 
 def save_story_to_file(story):

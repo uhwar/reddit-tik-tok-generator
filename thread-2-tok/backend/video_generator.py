@@ -44,11 +44,27 @@ DURATION_MODES = {
 
 # Available TTS voices via gTTS
 VOICE_OPTIONS = {
+    # Original voices (preserved)
     "1": {"name": "US English (Female)",        "lang": "en", "tld": "com"},
     "2": {"name": "UK English (Female)",         "lang": "en", "tld": "co.uk"},
     "3": {"name": "Australian English (Female)", "lang": "en", "tld": "com.au"},
     "4": {"name": "Indian English (Female)",     "lang": "en", "tld": "co.in"},
     "5": {"name": "Canadian English (Female)",   "lang": "en", "tld": "ca"},
+    
+    # High-pitched voices (trendy for TikTok)
+    "6": {"name": "Japanese (High-Pitched)",     "lang": "ja", "tld": "co.jp"},
+    "7": {"name": "Korean (High-Pitched)",       "lang": "ko", "tld": "co.kr"},
+    "8": {"name": "Taiwanese Mandarin (High)",   "lang": "zh-TW", "tld": "com.tw"},
+    
+    # Calm male voices
+    "9": {"name": "Australian English (Male)",   "lang": "en", "tld": "com.au"},
+    "10": {"name": "Canadian English (Male)",     "lang": "en", "tld": "ca"},
+    "11": {"name": "Irish English (Calm Male)",  "lang": "en", "tld": "ie"},
+    
+    # Additional trendy options
+    "12": {"name": "Spanish Mexico (Trendy)",    "lang": "es", "tld": "com.mx"},
+    "13": {"name": "French Canadian (Trendy)",   "lang": "fr", "tld": "ca"},
+    "14": {"name": "Portuguese Brazil (Trendy)", "lang": "pt", "tld": "com.br"},
 }
 
 
