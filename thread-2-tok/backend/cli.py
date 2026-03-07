@@ -28,6 +28,10 @@ reddit = praw.Reddit(
 # Configuration file path
 SUBREDDITS_FILE = os.path.join(os.path.dirname(__file__), 'subreddits.yaml')
 
+POPULAR_FETCH_TARGET = 250   # per feed pull – totals ~900 stories per sub
+NICHE_FETCH_TARGET = 80
+PAGE_SIZE = 10
+MIN_COMMENTS = 50
 
 def load_subreddit_config():
     """Load subreddit configuration from YAML file."""
