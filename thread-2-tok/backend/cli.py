@@ -5,6 +5,7 @@ Interactive console application for selecting subreddits and stories by virality
 """
 
 import os
+import random
 import sys
 import yaml
 import praw
@@ -68,43 +69,39 @@ def get_subreddits_by_tag(tag, config=None):
     return matching
 
 
+def _normalize(value, peak):
+    return min(1.0, float(value) / peak) if peak else 0.0
+
+
 def calculate_virality_score(post):
-    """
-    Score a post 1-9 based purely on total interactions.
-    Interactions = upvotes + comments + (awards * 10)
-    Thresholds are calibrated so most active posts score 4-7,
-    exceptional posts score 8-9, and quiet posts score 1-3.
-    """
+    """Updated virality scale with heavier weight on comments/replies."""
     upvotes = max(0, post.score)
-    comments = post.num_comments
-    awards = getattr(post, 'total_awards_received', 0)
+    comments = max(0, post.num_comments)
+    awards = max(0, getattr(post, 'total_awards_received', 0))
+    age_hours = (datetime.now(timezone.utc) - datetime.fromtimestamp(post.created_utc, tz=timezone.utc)).total_seconds() / 3600
 
-    total_interactions = upvotes + comments + (awards * 10)
+    comment_score = _normalize(comments, 400)  # 400+ comments -> 1.0
+    vote_score = _normalize(upvotes, 20000)
+    award_score = _normalize(awards * 5, 100)
+    freshness = 1.0 if age_hours <= 4 else max(0.1, 1 - (age_hours / 72))
+    discussion_ratio = _normalize(comments * 2, upvotes + 1)
 
-    if total_interactions >= 50000:
-        score = 9
-    elif total_interactions >= 20000:
-        score = 8
-    elif total_interactions >= 8000:
-        score = 7
-    elif total_interactions >= 3000:
-        score = 6
-    elif total_interactions >= 1000:
-        score = 5
-    elif total_interactions >= 400:
-        score = 4
-    elif total_interactions >= 100:
-        score = 3
-    elif total_interactions >= 20:
-        score = 2
-    else:
-        score = 1
-
+    weighted = (
+        comment_score * 0.35 +
+        vote_score * 0.25 +
+        discussion_ratio * 0.15 +
+        freshness * 0.15 +
+        award_score * 0.10
+    )
+    score = max(1, min(9, int(round(weighted * 9))))
     breakdown = {
         'upvotes': upvotes,
         'comments': comments,
         'awards': awards,
-        'total_interactions': total_interactions
+        'comment_weight': comment_score,
+        'vote_weight': vote_score,
+        'freshness': freshness,
+        'total_interactions': upvotes + comments + (awards * 10),
     }
     return score, breakdown
 
@@ -112,6 +109,7 @@ def calculate_virality_score(post):
 def _build_story_dict(post, subreddit_name, config):
     """Helper to build a story dict from a PRAW post object."""
     virality_score, breakdown = calculate_virality_score(post)
+    full_text = f"{post.title}. {post.selftext}"
     return {
         'title': post.title,
         'body': post.selftext[:300] + '...' if len(post.selftext) > 300 else post.selftext,
@@ -125,6 +123,7 @@ def _build_story_dict(post, subreddit_name, config):
         'created_utc': post.created_utc,
         'virality_score': virality_score,
         'virality_breakdown': breakdown,
+        'estimated_seconds': estimate_duration_seconds(full_text),
         'tags': config.get(subreddit_name, [])
     }
 
@@ -139,25 +138,35 @@ _POPULAR_SUBS = {
 
 
 def _fetch_sub_posts(sub, limit):
-    """Pull posts from hot + top across week/month/year for maximum coverage."""
+    """Pull posts from multiple feeds until we approach the desired volume."""
     seen = set()
     posts = []
 
-    def _add(feed):
-        for p in feed:
-            if p.id not in seen:
+    feeds = [
+        lambda l: sub.hot(limit=l),
+        lambda l: sub.top(time_filter='week', limit=l),
+        lambda l: sub.top(time_filter='month', limit=l),
+        lambda l: sub.top(time_filter='year', limit=max(10, l // 2)),
+        lambda l: sub.new(limit=max(10, l // 2)),
+    ]
+
+    per_feed = min(100, max(50, limit))
+
+    for fetch in feeds:
+        try:
+            for p in fetch(per_feed):
+                if p.id in seen:
+                    continue
                 seen.add(p.id)
                 posts.append(p)
-
-    _add(sub.hot(limit=limit))
-    _add(sub.top(time_filter='week',  limit=limit))
-    _add(sub.top(time_filter='month', limit=limit))
-    _add(sub.top(time_filter='year',  limit=limit // 2))
-    _add(sub.new(limit=limit // 2))
+                if len(posts) >= limit:
+                    return posts
+        except Exception:
+            continue
     return posts
 
 
-def fetch_stories_by_tag(tag, min_virality=0):
+def fetch_stories_by_tag(tag, min_virality=0, max_seconds=None, allow_split=False):
     """
     Fetch stories from all subreddits matching a tag.
     Popular subs: hot+top(week/month/year)+new with limit=50 -> ~150-200 candidates.
@@ -174,11 +183,15 @@ def fetch_stories_by_tag(tag, min_virality=0):
     stories = []
     seen_ids = set()
 
+    duration_cap = max_seconds if (max_seconds and not allow_split) else None
+    skipped_by_length = 0
+    skipped_by_comments = 0
+
     for subreddit_name in subreddits:
         try:
             sub = reddit.subreddit(subreddit_name)
             is_popular = subreddit_name.lower() in _POPULAR_SUBS
-            limit = 50 if is_popular else 15
+            limit = POPULAR_FETCH_TARGET if is_popular else NICHE_FETCH_TARGET
             print(f"  Fetching r/{subreddit_name} ({'popular' if is_popular else 'niche'}, limit={limit})...")
             feed = _fetch_sub_posts(sub, limit)
             for post in feed:
@@ -186,13 +199,20 @@ def fetch_stories_by_tag(tag, min_virality=0):
                     continue
                 if not post.selftext or post.selftext.strip() in ('', '[removed]', '[deleted]'):
                     continue
+                if post.num_comments < MIN_COMMENTS:
+                    skipped_by_comments += 1
+                    continue
                 seen_ids.add(post.id)
-                stories.append(_build_story_dict(post, subreddit_name, config))
+                story = _build_story_dict(post, subreddit_name, config)
+                if duration_cap and story['estimated_seconds'] > duration_cap:
+                    skipped_by_length += 1
+                    continue
+                stories.append(story)
         except Exception as e:
             print(f"  Skipping r/{subreddit_name}: {e}")
             continue
 
-    print(f"  Total candidates: {len(stories)}")
+    print(f"  Total kept: {len(stories)} | skipped short-comments: {skipped_by_comments} | over-length: {skipped_by_length}")
 
     # Sort best first
     stories.sort(key=lambda x: (x['virality_score'], x['score']), reverse=True)
@@ -222,21 +242,25 @@ def display_tags():
     return tags
 
 
-def display_stories(stories, max_seconds=120, duration_label="Under 2 minutes", offset=0):
-    """Display 10 stories starting at offset. Returns the slice shown."""
+def display_stories(stories, max_seconds=120, duration_label="Under 2 minutes", offset=0, randomize=False):
+    """Display up to PAGE_SIZE stories (sequential or random)."""
     if not stories:
         print("\nNo stories found matching criteria.")
         return None
 
-    page = stories[offset:offset + 10]
-    if not page:
-        print("\nNo more stories available.")
-        return None
-
-    total = len(stories)
-    showing_end = min(offset + 10, total)
+    if randomize:
+        sample_count = min(PAGE_SIZE, len(stories))
+        page = random.sample(stories, sample_count)
+        offset_label = "RANDOMIZED PICKS"
+    else:
+        page = stories[offset:offset + PAGE_SIZE]
+        if not page:
+            print("\nNo more stories available.")
+            return None
+        showing_end = min(offset + PAGE_SIZE, len(stories))
+        offset_label = f"STORIES {offset+1}-{showing_end} of {len(stories)}"
     print("\n" + "="*80)
-    print(f"STORIES {offset+1}-{showing_end} of {total}  |  Mode: {duration_label}")
+    print(f"{offset_label}  |  Mode: {duration_label}")
     print("="*80)
 
     allow_split_mode = DURATION_MODES.get(
@@ -251,6 +275,8 @@ def display_stories(stories, max_seconds=120, duration_label="Under 2 minutes", 
         if allow_split_mode:
             parts = max(1, int(est_secs // max_seconds) + (1 if est_secs % max_seconds > 5 else 0))
         else:
+            if est_secs > max_seconds:
+                continue
             parts = 1
         parts_label = f"videos: {parts}"
 
@@ -260,7 +286,8 @@ def display_stories(stories, max_seconds=120, duration_label="Under 2 minutes", 
         print(f"TITLE:   {story['title']}")
         print(f"AUTHOR:  u/{story['author']}")
         print(f"STATS:   {story['score']} upvotes | {story['num_comments']} comments | {story['upvote_ratio']*100:.0f}% upvoted | {vb['awards']} awards")
-        print(f"TOTAL INTERACTIONS: {vb['total_interactions']:,}")
+        est_mins = est_secs / 60
+        print(f"TOTAL INTERACTIONS: {vb['total_interactions']:,} | EST. LENGTH: ~{est_mins:.1f} min")
         print(f"PREVIEW:")
         preview = story['body'][:300] if len(story['body']) > 300 else story['body']
         print(f"  \"{preview}\"")
@@ -269,31 +296,33 @@ def display_stories(stories, max_seconds=120, duration_label="Under 2 minutes", 
     return page
 
 
-def select_story_interactive(stories, has_more=False, multi=False):
+def select_story_interactive(stories, has_more=False, multi=False, allow_random=False):
     """Let user select a story from the displayed page.
-    Returns (story, 'more') where story is the selected story or None,
-    and 'more' is True if the user wants the next page.
-    If multi=True, returns (selected_stories, 'more') where selected_stories is a list.
+    Returns (selection, action) where action can be 'more', 'random', or None.
+    If multi=True, selection is a list.
     """
     if not stories:
-        return [] if multi else (None, False), False
+        return [] if multi else (None), None
 
     more_hint = ", (m)ore" if has_more else ""
+    random_hint = ", (r)andom" if allow_random else ""
     batch_hint = " or (b)atch select" if multi else ""
-    prompt = f"\nSelect story number (1-{len(stories)}){more_hint}{batch_hint} or 'q' to quit: "
+    prompt = f"\nSelect story number (1-{len(stories)}){more_hint}{random_hint}{batch_hint} or 'q' to quit: "
 
     while True:
         try:
             choice = input(prompt).strip().lower()
             if choice == 'q':
-                return [] if multi else (None, False), False
+                return [] if multi else (None), None
             if choice == 'm' and has_more:
-                return [] if multi else (None, True), True
+                return [] if multi else (None), 'more'
+            if choice == 'r' and allow_random:
+                return [] if multi else (None), 'random'
             if choice == 'b' and multi:
-                return select_multiple_stories(stories), False
+                return select_multiple_stories(stories), None
             idx = int(choice) - 1
             if 0 <= idx < len(stories):
-                return [stories[idx]] if multi else (stories[idx], False), False
+                return [stories[idx]] if multi else stories[idx], None
             else:
                 print(f"Invalid selection. Please choose 1-{len(stories)}.")
         except ValueError:
@@ -434,27 +463,47 @@ def browse_by_tag():
     # Step 3: Fetch and display stories
     min_virality = int(input("Minimum virality score (1-9, default 4): ") or "4")
     print(f"\nFetching stories for tag '{selected_tag}'...")
-    stories = fetch_stories_by_tag(selected_tag, min_virality=min_virality)
+    stories = fetch_stories_by_tag(
+        selected_tag,
+        min_virality=min_virality,
+        max_seconds=max_seconds,
+        allow_split=allow_split,
+    )
 
     if not stories:
         print("\nNo stories found. Try a different tag or check your Reddit API credentials.")
         return
 
     offset = 0
+    random_mode = False
     while True:
-        page = display_stories(stories, max_seconds=max_seconds,
-                               duration_label=duration_label, offset=offset)
+        page = display_stories(
+            stories,
+            max_seconds=max_seconds,
+            duration_label=duration_label,
+            offset=offset,
+            randomize=random_mode,
+        )
         if not page:
             print("No more stories to show.")
             break
 
-        has_more = (offset + 10) < len(stories)
-        # Enable multi=True for batch selection
-        selected_stories, want_more = select_story_interactive(page, has_more=has_more, multi=True)
+        has_more = (offset + PAGE_SIZE) < len(stories) and not random_mode
+        selected_stories, action = select_story_interactive(
+            page,
+            has_more=has_more,
+            multi=True,
+            allow_random=True,
+        )
 
-        if want_more:
-            offset += 10
+        if action == 'more':
+            offset += PAGE_SIZE
+            random_mode = False
             continue
+        if action == 'random':
+            random_mode = True
+            continue
+        random_mode = False
 
         if not selected_stories:
             break
