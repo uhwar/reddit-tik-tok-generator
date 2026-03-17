@@ -29,8 +29,8 @@ reddit = praw.Reddit(
 # Configuration file path
 SUBREDDITS_FILE = os.path.join(os.path.dirname(__file__), 'subreddits.yaml')
 
-POPULAR_FETCH_TARGET = 250   # per feed pull – totals ~900 stories per sub
-NICHE_FETCH_TARGET = 80
+POPULAR_FETCH_TARGET = 10000   # per feed pull – totals ~30k stories per sub
+NICHE_FETCH_TARGET = 10000
 PAGE_SIZE = 10
 MIN_COMMENTS = 50
 
@@ -192,9 +192,11 @@ def fetch_stories_by_tag(tag, min_virality=0, max_seconds=None, allow_split=Fals
             sub = reddit.subreddit(subreddit_name)
             is_popular = subreddit_name.lower() in _POPULAR_SUBS
             limit = POPULAR_FETCH_TARGET if is_popular else NICHE_FETCH_TARGET
-            # Increase limit for AmITheAsshole when filtering for girly tag
-            if tag == 'girly' and subreddit_name.lower() == 'amitheasshole':
-                limit = max(limit, 500)  # Fetch up to 500 posts for girly filter
+            # Increase limits for girly tags
+            if tag in ['girly_general', 'girly_targeted'] and subreddit_name.lower() in [s.lower() for s in _POPULAR_SUBS]:
+                limit = max(limit, 500)  # Increase popular subs for girly
+            elif tag == 'girly_targeted':
+                limit = max(limit, 200)  # Increase niche women subs
             print(f"  Fetching r/{subreddit_name} ({'popular' if is_popular else 'niche'}, limit={limit})...")
             feed = _fetch_sub_posts(sub, limit)
             for post in feed:
@@ -207,20 +209,24 @@ def fetch_stories_by_tag(tag, min_virality=0, max_seconds=None, allow_split=Fals
                     continue
                 seen_ids.add(post.id)
                 story = _build_story_dict(post, subreddit_name, config)
-                # Apply girly filter: only include if title indicates female
-                if tag == 'girly':
+                # Apply girly filter for girly_general tag only
+                if tag == 'girly_general':
                     title_lower = story['title'].lower()
                     female_patterns = [
-                        r'^f\s*\d+',  # F25, F 25
-                        r'^female\s*\d+',  # Female 25
-                        r'^\d+\s*f\b',  # 25F, 25 F
-                        r'^\(f,?\s*\d+\)',  # (F,25), (F 25)
-                        r'^f\(?\d+\)?',  # F25, F(25)
-                        r'^woman\s*\d+',  # Woman 25
-                        r'^girl\s*\d+',  # Girl 25 (though less common)
+                        r'\bf\d+',  # F25, F 25, etc.
+                        r'\bfemale',  # Female
+                        r'\bwoman',  # Woman
+                        r'\bgirl',  # Girl
+                        r'\d+\s*f\b',  # 25F, 25 F
+                        r'\(f[^m]',  # (F, (F25, not (M
+                        r'^\s*f\d+',  # F25 at start
+                        r'^\s*female',  # Female at start
                     ]
                     import re
-                    if not any(re.search(pattern, title_lower) for pattern in female_patterns):
+                    # Must match female pattern AND not match male pattern
+                    has_female = any(re.search(pattern, title_lower) for pattern in female_patterns)
+                    has_male = re.search(r'\bm\d+', title_lower) or re.search(r'\bmale', title_lower) or re.search(r'\(m', title_lower)
+                    if not has_female or has_male:
                         continue
                 if duration_cap and story['estimated_seconds'] > duration_cap:
                     skipped_by_length += 1
@@ -464,19 +470,21 @@ def browse_by_tag():
         print("No tags found in configuration.")
         return
     
-    tag_input = input("\nEnter tag name (or number): ").strip().lower()
+    tag_input = input("\nEnter tag name or number: ").strip().lower()
     
-    # Check if user entered a number
-    try:
-        choice = int(input("\nSelect tag number: ")) - 1
+    if tag_input.isdigit():
+        choice = int(tag_input) - 1
         if 0 <= choice < len(tags):
             selected_tag = tags[choice]
         else:
-            print("Invalid selection.")
+            print("Invalid number.")
             return
-    except ValueError:
-        print("Invalid input.")
-        return
+    else:
+        if tag_input in [t.lower() for t in tags]:
+            selected_tag = tag_input
+        else:
+            print("Invalid tag name.")
+            return
 
     # Step 3: Fetch and display stories
     min_virality = int(input("Minimum virality score (1-9, default 4): ") or "4")
@@ -770,7 +778,7 @@ def save_story_to_file(story):
 
 if __name__ == "__main__":
     try:
-        main_menu()
+        browse_by_tag()
     except KeyboardInterrupt:
         print("\n\nGoodbye!")
         sys.exit(0)
