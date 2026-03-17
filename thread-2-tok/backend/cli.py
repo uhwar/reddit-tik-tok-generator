@@ -192,6 +192,9 @@ def fetch_stories_by_tag(tag, min_virality=0, max_seconds=None, allow_split=Fals
             sub = reddit.subreddit(subreddit_name)
             is_popular = subreddit_name.lower() in _POPULAR_SUBS
             limit = POPULAR_FETCH_TARGET if is_popular else NICHE_FETCH_TARGET
+            # Increase limit for AmITheAsshole when filtering for girly tag
+            if tag == 'girly' and subreddit_name.lower() == 'amitheasshole':
+                limit = max(limit, 500)  # Fetch up to 500 posts for girly filter
             print(f"  Fetching r/{subreddit_name} ({'popular' if is_popular else 'niche'}, limit={limit})...")
             feed = _fetch_sub_posts(sub, limit)
             for post in feed:
@@ -204,6 +207,21 @@ def fetch_stories_by_tag(tag, min_virality=0, max_seconds=None, allow_split=Fals
                     continue
                 seen_ids.add(post.id)
                 story = _build_story_dict(post, subreddit_name, config)
+                # Apply girly filter: only include if title indicates female
+                if tag == 'girly':
+                    title_lower = story['title'].lower()
+                    female_patterns = [
+                        r'^f\s*\d+',  # F25, F 25
+                        r'^female\s*\d+',  # Female 25
+                        r'^\d+\s*f\b',  # 25F, 25 F
+                        r'^\(f,?\s*\d+\)',  # (F,25), (F 25)
+                        r'^f\(?\d+\)?',  # F25, F(25)
+                        r'^woman\s*\d+',  # Woman 25
+                        r'^girl\s*\d+',  # Girl 25 (though less common)
+                    ]
+                    import re
+                    if not any(re.search(pattern, title_lower) for pattern in female_patterns):
+                        continue
                 if duration_cap and story['estimated_seconds'] > duration_cap:
                     skipped_by_length += 1
                     continue
